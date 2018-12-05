@@ -34,6 +34,7 @@ def model(images, weight_decay=1e-5, is_training=True):
     '''
     define the model, we use slim's implemention of resnet
     '''
+    # 针对三个通道进行标准化
     images = mean_image_subtraction(images)
 
     with slim.arg_scope(resnet_v1.resnet_arg_scope(weight_decay=weight_decay)):

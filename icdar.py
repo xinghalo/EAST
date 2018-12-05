@@ -14,7 +14,7 @@ import tensorflow as tf
 
 from data_util import GeneratorEnqueuer
 
-tf.app.flags.DEFINE_string('training_data_path', '/data/ocr/icdar2015/',
+tf.app.flags.DEFINE_string('training_data_path', '/Users/xingoo/Documents/dataset/icdar2015/',
                            'training dataset to use')
 tf.app.flags.DEFINE_integer('max_image_large_side', 1280,
                             'max image size of training')
@@ -36,30 +36,45 @@ FLAGS = tf.app.flags.FLAGS
 def get_images():
     files = []
     for ext in ['jpg', 'png', 'jpeg', 'JPG']:
-        files.extend(glob.glob(
-            os.path.join(FLAGS.training_data_path, '*.{}'.format(ext))))
+        files.extend(glob.glob(os.path.join(FLAGS.training_data_path, '*.{}'.format(ext))))
     return files
 
 
 def load_annoataion(p):
-    '''
+    """
     load annotation from the text file
+
+    377,117,463,117,465,130,378,130,Genaxis Theatre
+    493,115,519,115,519,131,493,131,[06]
+    374,155,409,155,409,170,374,170,###
+    492,151,551,151,551,170,492,170,62-03
+    376,198,422,198,422,212,376,212,Carpark
+    494,190,539,189,539,205,494,206,###
+    374,1,494,0,492,85,372,86,###
+
     :param p:
-    :return:
-    '''
+    :return: 第一个数组表示坐标点的信息；第二个坐标表示是否识别出文字
+    """
     text_polys = []
     text_tags = []
     if not os.path.exists(p):
         return np.array(text_polys, dtype=np.float32)
-    with open(p, 'r') as f:
+    with open(p, 'r', encoding='utf-8') as f:
         reader = csv.reader(f)
         for line in reader:
+            # label是具体的文字
             label = line[-1]
+
             # strip BOM. \ufeff for python3,  \xef\xbb\bf for python2
             line = [i.strip('\ufeff').strip('\xef\xbb\xbf') for i in line]
 
+            # 获得8个坐标点
             x1, y1, x2, y2, x3, y3, x4, y4 = list(map(float, line[:8]))
+
+            # 形成坐标点信息
             text_polys.append([[x1, y1], [x2, y2], [x3, y3], [x4, y4]])
+
+            # 如果是*和###表示没有识别出文字，对应的tags为True
             if label == '*' or label == '###':
                 text_tags.append(True)
             else:
@@ -68,11 +83,11 @@ def load_annoataion(p):
 
 
 def polygon_area(poly):
-    '''
+    """
     compute area of a polygon
     :param poly:
     :return:
-    '''
+    """
     edge = [
         (poly[1][0] - poly[0][0]) * (poly[1][1] + poly[0][1]),
         (poly[2][0] - poly[1][0]) * (poly[2][1] + poly[1][1]),
@@ -83,21 +98,26 @@ def polygon_area(poly):
 
 
 def check_and_validate_polys(polys, tags, xxx_todo_changeme):
-    '''
-    check so that the text poly is in the same direction,
-    and also filter some invalid polygons
+    """
+    check so that the text poly is in the same direction, and also filter some invalid polygons
     :param polys:
     :param tags:
     :return:
-    '''
+    """
+    # 图像尺寸
     (h, w) = xxx_todo_changeme
     if polys.shape[0] == 0:
         return polys
+
+    # 标准化每个坐标点的最小值和最大值，对于x使用0和宽度进行标准化，对于y使用0和高度进行标准化
+    # np.clip(a, min, max)用于截断，当a>min且a<max时保持a不变；否则用min或者max替换
     polys[:, :, 0] = np.clip(polys[:, :, 0], 0, w-1)
     polys[:, :, 1] = np.clip(polys[:, :, 1], 0, h-1)
 
     validated_polys = []
     validated_tags = []
+
+    # 规范点的方向，以逆时针的方向分布(x1,y1),(x3,y3),(x2,y2),(x1,y1)
     for poly, tag in zip(polys, tags):
         p_area = polygon_area(poly)
         if abs(p_area) < 1:
@@ -113,7 +133,7 @@ def check_and_validate_polys(polys, tags, xxx_todo_changeme):
 
 
 def crop_area(im, polys, tags, crop_background=False, max_tries=50):
-    '''
+    """
     make random crop from the input image
     :param im:
     :param polys:
@@ -121,12 +141,15 @@ def crop_area(im, polys, tags, crop_background=False, max_tries=50):
     :param crop_background:
     :param max_tries:
     :return:
-    '''
+    """
     h, w, _ = im.shape
+
+    # 左右两边，边界填充1/10
     pad_h = h//10
     pad_w = w//10
     h_array = np.zeros((h + pad_h*2), dtype=np.int32)
     w_array = np.zeros((w + pad_w*2), dtype=np.int32)
+
     for poly in polys:
         poly = np.round(poly, decimals=0).astype(np.int32)
         minx = np.min(poly[:, 0])
@@ -135,6 +158,7 @@ def crop_area(im, polys, tags, crop_background=False, max_tries=50):
         miny = np.min(poly[:, 1])
         maxy = np.max(poly[:, 1])
         h_array[miny+pad_h:maxy+pad_h] = 1
+
     # ensure the cropped area not across a text
     h_axis = np.where(h_array == 0)[0]
     w_axis = np.where(w_array == 0)[0]
@@ -461,12 +485,24 @@ def restore_rectangle(origin, geometry):
 
 
 def generate_rbox(im_size, polys, tags):
+    """
+
+    :param im_size:
+    :param polys:
+    :param tags:
+    :return:
+    """
     h, w = im_size
+
+    # TODO poly_mask和traning_mask是干嘛的？
+
     poly_mask = np.zeros((h, w), dtype=np.uint8)
     score_map = np.zeros((h, w), dtype=np.uint8)
     geo_map = np.zeros((h, w, 5), dtype=np.float32)
+
     # mask used during traning, to ignore some hard areas
     training_mask = np.ones((h, w), dtype=np.uint8)
+
     for poly_idx, poly_tag in enumerate(zip(polys, tags)):
         poly = poly_tag[0]
         tag = poly_tag[1]
@@ -584,40 +620,58 @@ def generator(input_size=512, batch_size=32,
               background_ratio=3./8,
               random_scale=np.array([0.5, 1, 2.0, 3.0]),
               vis=False):
+
     image_list = np.array(get_images())
-    print('{} training images in {}'.format(
-        image_list.shape[0], FLAGS.training_data_path))
+    print('{} training images in {}'.format(image_list.shape[0], FLAGS.training_data_path))
     index = np.arange(0, image_list.shape[0])
     while True:
+        # 随机打散数据
         np.random.shuffle(index)
+
         images = []
         image_fns = []
         score_maps = []
         geo_maps = []
         training_masks = []
+
         for i in index:
             try:
+                # 读取图片
                 im_fn = image_list[i]
                 im = cv2.imread(im_fn)
+
                 # print im_fn
+                # 获得标注文件
                 h, w, _ = im.shape
                 txt_fn = im_fn.replace(os.path.basename(im_fn).split('.')[1], 'txt')
+
+                # 增加gt_
+                txts = txt_fn.split('img_')
+                txt_fn = txts[0]+'gt_img_'+txts[1]
+
                 if not os.path.exists(txt_fn):
                     print('text file {} does not exists'.format(txt_fn))
                     continue
 
+                # 加载标注信息
+                # 第一个数组为坐标点，第二个数组为是否识别出文字
                 text_polys, text_tags = load_annoataion(txt_fn)
 
                 text_polys, text_tags = check_and_validate_polys(text_polys, text_tags, (h, w))
                 # if text_polys.shape[0] == 0:
                 #     continue
+
                 # random scale this image
+                # 随机尺寸，有四种可以选择 0.5，1，2，3
                 rd_scale = np.random.choice(random_scale)
                 im = cv2.resize(im, dsize=None, fx=rd_scale, fy=rd_scale)
                 text_polys *= rd_scale
+
                 # print rd_scale
                 # random crop a area from image
+                # 随机裁剪图片
                 if np.random.rand() < background_ratio:
+                    # todo 裁剪图片的逻辑有待深入研究
                     # crop background
                     im, text_polys, text_tags = crop_area(im, text_polys, text_tags, crop_background=True)
                     if text_polys.shape[0] > 0:
@@ -628,10 +682,17 @@ def generator(input_size=512, batch_size=32,
                     max_h_w_i = np.max([new_h, new_w, input_size])
                     im_padded = np.zeros((max_h_w_i, max_h_w_i, 3), dtype=np.uint8)
                     im_padded[:new_h, :new_w, :] = im.copy()
+
+                    # 图片转成512*512
                     im = cv2.resize(im_padded, dsize=(input_size, input_size))
+
+                    # 制作成scores
                     score_map = np.zeros((input_size, input_size), dtype=np.uint8)
+                    # 如果是RBOX则通道数为5
                     geo_map_channels = 5 if FLAGS.geometry == 'RBOX' else 8
+                    # 每个点都有5维
                     geo_map = np.zeros((input_size, input_size, geo_map_channels), dtype=np.float32)
+                    # mask都是1
                     training_mask = np.ones((input_size, input_size), dtype=np.uint8)
                 else:
                     im, text_polys, text_tags = crop_area(im, text_polys, text_tags, crop_background=False)
@@ -640,23 +701,30 @@ def generator(input_size=512, batch_size=32,
                     h, w, _ = im.shape
 
                     # pad the image to the training input size or the longer side of image
+                    # 获得高、宽、输入 中的最大值，把图像拷贝进来
                     new_h, new_w, _ = im.shape
                     max_h_w_i = np.max([new_h, new_w, input_size])
                     im_padded = np.zeros((max_h_w_i, max_h_w_i, 3), dtype=np.uint8)
                     im_padded[:new_h, :new_w, :] = im.copy()
                     im = im_padded
+
                     # resize the image to input size
                     new_h, new_w, _ = im.shape
                     resize_h = input_size
                     resize_w = input_size
                     im = cv2.resize(im, dsize=(resize_w, resize_h))
+
+                    # 尺寸变化的同时，针对点位进行变化
                     resize_ratio_3_x = resize_w/float(new_w)
                     resize_ratio_3_y = resize_h/float(new_h)
                     text_polys[:, :, 0] *= resize_ratio_3_x
                     text_polys[:, :, 1] *= resize_ratio_3_y
                     new_h, new_w, _ = im.shape
+
+                    # 生成标注信息
                     score_map, geo_map, training_mask = generate_rbox((new_h, new_w), text_polys, text_tags)
 
+                # 显示图片
                 if vis:
                     fig, axs = plt.subplots(3, 2, figsize=(20, 30))
                     # axs[0].imshow(im[:, :, ::-1])
@@ -700,6 +768,7 @@ def generator(input_size=512, batch_size=32,
                     plt.show()
                     plt.close()
 
+                # 把解决后的图片放入，并翻转RGB
                 images.append(im[:, :, ::-1].astype(np.float32))
                 image_fns.append(im_fn)
                 score_maps.append(score_map[::4, ::4, np.newaxis].astype(np.float32))
@@ -741,4 +810,4 @@ def get_batch(num_workers, **kwargs):
 
 
 if __name__ == '__main__':
-    pass
+    next(generator(512, 32))

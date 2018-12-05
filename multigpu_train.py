@@ -69,30 +69,42 @@ def average_gradients(tower_grads):
 def main(argv=None):
     import os
     os.environ['CUDA_VISIBLE_DEVICES'] = FLAGS.gpu_list
+
+    # 检查检查点路径
     if not tf.gfile.Exists(FLAGS.checkpoint_path):
+        # 如果没有checkpoint路径，则直接创建
         tf.gfile.MkDir(FLAGS.checkpoint_path)
     else:
+        # 如果已经存在路径，则先级联删除目录，再创建
         if not FLAGS.restore:
             tf.gfile.DeleteRecursively(FLAGS.checkpoint_path)
             tf.gfile.MkDir(FLAGS.checkpoint_path)
 
+    # 创建环境变量
+    # 1 输入的图片
     input_images = tf.placeholder(tf.float32, shape=[None, None, None, 3], name='input_images')
+    # 2 输入的标注
     input_score_maps = tf.placeholder(tf.float32, shape=[None, None, None, 1], name='input_score_maps')
     if FLAGS.geometry == 'RBOX':
+        # RBOX的风格为：x, y, width, height, theta
         input_geo_maps = tf.placeholder(tf.float32, shape=[None, None, None, 5], name='input_geo_maps')
     else:
+        # 四个点的坐标
         input_geo_maps = tf.placeholder(tf.float32, shape=[None, None, None, 8], name='input_geo_maps')
+
+    # TODO 这个不知道做什么的
     input_training_masks = tf.placeholder(tf.float32, shape=[None, None, None, 1], name='input_training_masks')
 
     global_step = tf.get_variable('global_step', [], initializer=tf.constant_initializer(0), trainable=False)
     learning_rate = tf.train.exponential_decay(FLAGS.learning_rate, global_step, decay_steps=10000, decay_rate=0.94, staircase=True)
+
     # add summary
+    # Adam优化
     tf.summary.scalar('learning_rate', learning_rate)
     opt = tf.train.AdamOptimizer(learning_rate)
     # opt = tf.train.MomentumOptimizer(learning_rate, 0.9)
 
-
-    # split
+    # split，如果有多个CPU，这里进行切分训练
     input_images_split = tf.split(input_images, len(gpus))
     input_score_maps_split = tf.split(input_score_maps, len(gpus))
     input_geo_maps_split = tf.split(input_geo_maps, len(gpus))
@@ -100,6 +112,7 @@ def main(argv=None):
 
     tower_grads = []
     reuse_variables = None
+    # 每个GPU去单独训练数据
     for i, gpu_id in enumerate(gpus):
         with tf.device('/gpu:%d' % gpu_id):
             with tf.name_scope('model_%d' % gpu_id) as scope:
@@ -114,6 +127,7 @@ def main(argv=None):
                 grads = opt.compute_gradients(total_loss)
                 tower_grads.append(grads)
 
+    # 计算平均梯度
     grads = average_gradients(tower_grads)
     apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
 
@@ -126,6 +140,7 @@ def main(argv=None):
     with tf.control_dependencies([variables_averages_op, apply_gradient_op, batch_norm_updates_op]):
         train_op = tf.no_op(name='train_op')
 
+    # 模型保存
     saver = tf.train.Saver(tf.global_variables())
     summary_writer = tf.summary.FileWriter(FLAGS.checkpoint_path, tf.get_default_graph())
 

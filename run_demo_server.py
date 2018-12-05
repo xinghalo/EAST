@@ -12,6 +12,7 @@ import json
 import functools
 import logging
 import collections
+import tensorflow as tf
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -35,7 +36,7 @@ def get_host_info():
 @functools.lru_cache(maxsize=100)
 def get_predictor(checkpoint_path):
     logger.info('loading model')
-    import tensorflow as tf
+
     import model
     from icdar import restore_rectangle
     import lanms
