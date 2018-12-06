@@ -134,7 +134,7 @@ def get_predictor(checkpoint_path):
             'rtparams': rtparams,
             'timing': timer,
         }
-        ret.update(get_host_info())
+        #ret.update(get_host_info())
         return ret
 
 
@@ -210,6 +210,7 @@ def index_post():
 
 def main():
     global checkpoint_path
+    checkpoint_path="/Users/xingoo/Documents/dataset/east_icdar2015_resnet_v1_50_rbox"
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', default=8769, type=int)
     parser.add_argument('--checkpoint-path', default=checkpoint_path)

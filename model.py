@@ -15,12 +15,12 @@ def unpool(inputs):
 
 
 def mean_image_subtraction(images, means=[123.68, 116.78, 103.94]):
-    '''
+    """
     image normalization
     :param images:
     :param means:
     :return:
-    '''
+    """
     num_channels = images.get_shape().as_list()[-1]
     if len(means) != num_channels:
       raise ValueError('len(means) must match the number of channels')
@@ -31,9 +31,9 @@ def mean_image_subtraction(images, means=[123.68, 116.78, 103.94]):
 
 
 def model(images, weight_decay=1e-5, is_training=True):
-    '''
+    """
     define the model, we use slim's implemention of resnet
-    '''
+    """
     # 针对三个通道进行标准化
     images = mean_image_subtraction(images)
 
@@ -59,6 +59,13 @@ def model(images, weight_decay=1e-5, is_training=True):
             g = [None, None, None, None]
             h = [None, None, None, None]
             num_outputs = [None, 128, 64, 32]
+
+            # f3 -> f2 -> f1 -> f0/h0 <- g0c1h1 <- g1c2h2 <- g2c3h3 <- g3
+            # g3 -> score map
+            # g3 -> rbox
+            # g3 -> rotation
+            # rbox + rotation -> geo map
+
             for i in range(4):
                 if i == 0:
                     h[i] = f[i]
@@ -104,30 +111,43 @@ def dice_coefficient(y_true_cls, y_pred_cls,
 def loss(y_true_cls, y_pred_cls,
          y_true_geo, y_pred_geo,
          training_mask):
-    '''
+    """
     define the loss used for training, contraning two part,
     the first part we use dice loss instead of weighted logloss,
     the second part is the iou loss defined in the paper
+
+    dice loss和iou loss
+
     :param y_true_cls: ground truth of text
     :param y_pred_cls: prediction os text
     :param y_true_geo: ground truth of geometry
     :param y_pred_geo: prediction of geometry
     :param training_mask: mask used in training, to ignore some text annotated by ###
     :return:
-    '''
+    """
+    # 分类的损失
     classification_loss = dice_coefficient(y_true_cls, y_pred_cls, training_mask)
     # scale classification loss to match the iou loss part
     classification_loss *= 0.01
 
+    # iou的损失
+
     # d1 -> top, d2->right, d3->bottom, d4->left
     d1_gt, d2_gt, d3_gt, d4_gt, theta_gt = tf.split(value=y_true_geo, num_or_size_splits=5, axis=3)
     d1_pred, d2_pred, d3_pred, d4_pred, theta_pred = tf.split(value=y_pred_geo, num_or_size_splits=5, axis=3)
+
+    # 计算真实的面积和预测的面积
     area_gt = (d1_gt + d3_gt) * (d2_gt + d4_gt)
     area_pred = (d1_pred + d3_pred) * (d2_pred + d4_pred)
+
+    # 计算交集部分
     w_union = tf.minimum(d2_gt, d2_pred) + tf.minimum(d4_gt, d4_pred)
     h_union = tf.minimum(d1_gt, d1_pred) + tf.minimum(d3_gt, d3_pred)
     area_intersect = w_union * h_union
+
+    # 计算整个面积
     area_union = area_gt + area_pred - area_intersect
+
     L_AABB = -tf.log((area_intersect + 1.0)/(area_union + 1.0))
     L_theta = 1 - tf.cos(theta_pred - theta_gt)
     tf.summary.scalar('geometry_AABB', tf.reduce_mean(L_AABB * y_true_cls * training_mask))

@@ -201,20 +201,24 @@ def crop_area(im, polys, tags, crop_background=False, max_tries=50):
 
 
 def shrink_poly(poly, r):
-    '''
+    """
     fit a poly inside the origin poly, maybe bugs here...
     used for generate the score map
+
     :param poly: the text poly
     :param r: r in the paper
     :return: the shrinked poly
-    '''
+    """
     # shrink ratio
     R = 0.3
     # find the longer pair
+    # 寻找长短边
     if np.linalg.norm(poly[0] - poly[1]) + np.linalg.norm(poly[2] - poly[3]) > \
                     np.linalg.norm(poly[0] - poly[3]) + np.linalg.norm(poly[1] - poly[2]):
+        # p0到p1属于长边，p1到p2属于短边的情况
         # first move (p0, p1), (p2, p3), then (p0, p3), (p1, p2)
         ## p0, p1
+        # np.arctan2(1,np.sqrt(3))*180/3.14 = 30
         theta = np.arctan2((poly[1][1] - poly[0][1]), (poly[1][0] - poly[0][0]))
         poly[0][0] += R * r[0] * np.cos(theta)
         poly[0][1] += R * r[0] * np.sin(theta)
@@ -268,11 +272,24 @@ def shrink_poly(poly, r):
 
 
 def point_dist_to_line(p1, p2, p3):
+    """
+    计算p3到p1和p2之间的距离
+    :param p1:
+    :param p2:
+    :param p3:
+    :return:
+    """
     # compute the distance from p3 to p1-p2
     return np.linalg.norm(np.cross(p2 - p1, p1 - p3)) / np.linalg.norm(p2 - p1)
 
 
 def fit_line(p1, p2):
+    """
+    拟合一条直线，其中k是斜率，b是截距，即 y = k*x+b
+    :param p1: [x1, x2]
+    :param p2: [y1, y2]
+    :return:
+    """
     # fit a line ax+by+c = 0
     if p1[0] == p1[1]:
         return [1., 0., -p1[0]]
@@ -507,22 +524,29 @@ def generate_rbox(im_size, polys, tags):
         poly = poly_tag[0]
         tag = poly_tag[1]
 
+        # 计算四条边界的距离
         r = [None, None, None, None]
         for i in range(4):
+            # 计算每个点与相邻两个点的距离，即一条长边、一条短边
             r[i] = min(np.linalg.norm(poly[i] - poly[(i + 1) % 4]),
                        np.linalg.norm(poly[i] - poly[(i - 1) % 4]))
         # score map
+        # 针对四个点进行了抖动, 相当于往里面缩小了一圈
         shrinked_poly = shrink_poly(poly.copy(), r).astype(np.int32)[np.newaxis, :, :]
+        # 抖动后的分数图里面的点都置为1
         cv2.fillPoly(score_map, shrinked_poly, 1)
+        # ploymask里面，每个文本框是一个标记数字
         cv2.fillPoly(poly_mask, shrinked_poly, poly_idx + 1)
         # if the poly is too small, then ignore it during training
         poly_h = min(np.linalg.norm(poly[0] - poly[3]), np.linalg.norm(poly[1] - poly[2]))
         poly_w = min(np.linalg.norm(poly[0] - poly[1]), np.linalg.norm(poly[2] - poly[3]))
+        # 判断是否小于最小尺寸
         if min(poly_h, poly_w) < FLAGS.min_text_size:
             cv2.fillPoly(training_mask, poly.astype(np.int32)[np.newaxis, :, :], 0)
+        # 判断是否包含真实的内容
         if tag:
             cv2.fillPoly(training_mask, poly.astype(np.int32)[np.newaxis, :, :], 0)
-
+        # TODO 这里不理解是干嘛的
         xy_in_poly = np.argwhere(poly_mask == (poly_idx + 1))
         # if geometry == 'RBOX':
         # 对任意两个顶点的组合生成一个平行四边形 - generate a parallelogram for any combination of two vertices
@@ -532,9 +556,12 @@ def generate_rbox(im_size, polys, tags):
             p1 = poly[(i + 1) % 4]
             p2 = poly[(i + 2) % 4]
             p3 = poly[(i + 3) % 4]
+
             edge = fit_line([p0[0], p1[0]], [p0[1], p1[1]])
             backward_edge = fit_line([p0[0], p3[0]], [p0[1], p3[1]])
             forward_edge = fit_line([p1[0], p2[0]], [p1[1], p2[1]])
+
+            # TODO 这个地方太绕了...
             if point_dist_to_line(p0, p1, p2) > point_dist_to_line(p0, p1, p3):
                 # 平行线经过p2 - parallel lines through p2
                 if edge[1] == 0:
@@ -601,6 +628,8 @@ def generate_rbox(im_size, polys, tags):
         rectange, rotate_angle = sort_rectangle(rectange)
 
         p0_rect, p1_rect, p2_rect, p3_rect = rectange
+
+        # 计算每个点距离边界的距离以及旋转角度
         for y, x in xy_in_poly:
             point = np.array([x, y], dtype=np.float32)
             # top
@@ -613,6 +642,10 @@ def generate_rbox(im_size, polys, tags):
             geo_map[y, x, 3] = point_dist_to_line(p3_rect, p0_rect, point)
             # angle
             geo_map[y, x, 4] = rotate_angle
+
+    # score_map是核心的文本框的点
+    # geo_map维度为5，分别是距离top、right、down、left的距离 以及 旋转角度
+    # traning_mask为训练的文本框id
     return score_map, geo_map, training_mask
 
 

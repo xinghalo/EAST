@@ -29,9 +29,13 @@ def tower_loss(images, score_maps, geo_maps, training_masks, reuse_variables=Non
     with tf.variable_scope(tf.get_variable_scope(), reuse=reuse_variables):
         f_score, f_geometry = model.model(images, is_training=True)
 
+    # 计算损失值
+    # TODO training_masks没看懂是怎么用的
     model_loss = model.loss(score_maps, f_score,
                             geo_maps, f_geometry,
                             training_masks)
+    # 计算总共的损失
+    # TODO tf.add_n是怎么用的？
     total_loss = tf.add_n([model_loss] + tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
 
     # add summary
@@ -116,10 +120,17 @@ def main(argv=None):
     for i, gpu_id in enumerate(gpus):
         with tf.device('/gpu:%d' % gpu_id):
             with tf.name_scope('model_%d' % gpu_id) as scope:
+
+                # 输入的图片
                 iis = input_images_split[i]
+                # 分值map
                 isms = input_score_maps_split[i]
+                # geo_map
                 igms = input_geo_maps_split[i]
+                # 文本框标记位
                 itms = input_training_masks_split[i]
+
+
                 total_loss, model_loss = tower_loss(iis, isms, igms, itms, reuse_variables)
                 batch_norm_updates_op = tf.group(*tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope))
                 reuse_variables = True
@@ -159,6 +170,7 @@ def main(argv=None):
             if FLAGS.pretrained_model_path is not None:
                 variable_restore_op(sess)
 
+        # 构建数据生成器
         data_generator = icdar.get_batch(num_workers=FLAGS.num_readers,
                                          input_size=FLAGS.input_size,
                                          batch_size=FLAGS.batch_size_per_gpu * len(gpus))
@@ -166,6 +178,8 @@ def main(argv=None):
         start = time.time()
         for step in range(FLAGS.max_steps):
             data = next(data_generator)
+
+            # 开始训练
             ml, tl, _ = sess.run([model_loss, total_loss, train_op], feed_dict={input_images: data[0],
                                                                                 input_score_maps: data[2],
                                                                                 input_geo_maps: data[3],
