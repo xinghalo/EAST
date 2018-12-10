@@ -18,6 +18,7 @@ tf.app.flags.DEFINE_string('pretrained_model_path', None, '')
 
 import model
 import icdar
+import rctw17
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -171,7 +172,10 @@ def main(argv=None):
                 variable_restore_op(sess)
 
         # 构建数据生成器
-        data_generator = icdar.get_batch(num_workers=FLAGS.num_readers,
+        # data_generator = icdar.get_batch(num_workers=FLAGS.num_readers,
+        #                                  input_size=FLAGS.input_size,
+        #                                  batch_size=FLAGS.batch_size_per_gpu * len(gpus))
+        data_generator = rctw17.get_batch(num_workers=FLAGS.num_readers,
                                          input_size=FLAGS.input_size,
                                          batch_size=FLAGS.batch_size_per_gpu * len(gpus))
 
