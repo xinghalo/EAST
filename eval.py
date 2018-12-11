@@ -37,27 +37,35 @@ def get_images():
 
 
 def resize_image(im, max_side_len=2400):
-    '''
+    """
     resize image to a size multiple of 32 which is required by the network
+    调整图片的尺寸，长和宽均调整为32的整数倍
+
     :param im: the resized image
     :param max_side_len: limit of max image size to avoid out of memory in gpu
     :return: the resized image and the resize ratio
-    '''
+    """
     h, w, _ = im.shape
 
     resize_w = w
     resize_h = h
 
     # limit the max side
+    # 如果最大的边超过限制，则进行缩放
     if max(resize_h, resize_w) > max_side_len:
         ratio = float(max_side_len) / resize_h if resize_h > resize_w else float(max_side_len) / resize_w
     else:
         ratio = 1.
+
+    # 重新计算长和宽
     resize_h = int(resize_h * ratio)
     resize_w = int(resize_w * ratio)
 
+    # 修改为32的整数倍
     resize_h = resize_h if resize_h % 32 == 0 else (resize_h // 32 - 1) * 32
     resize_w = resize_w if resize_w % 32 == 0 else (resize_w // 32 - 1) * 32
+
+    # 调整照片尺寸
     im = cv2.resize(im, (int(resize_w), int(resize_h)))
 
     ratio_h = resize_h / float(h)
@@ -66,8 +74,8 @@ def resize_image(im, max_side_len=2400):
     return im, (ratio_h, ratio_w)
 
 
-def detect(score_map, geo_map, timer, score_map_thresh=0.8, box_thresh=0.1, nms_thres=0.2):
-    '''
+def detect(score_map, geo_map, timer, score_map_thresh=0.8, box_thresh=0.1, nms_thres=0.1):
+    """
     restore text boxes from score map and geo map
     :param score_map:
     :param geo_map:
@@ -76,7 +84,7 @@ def detect(score_map, geo_map, timer, score_map_thresh=0.8, box_thresh=0.1, nms_
     :param box_thresh: threshhold for boxes
     :param nms_thres: threshold for nms
     :return:
-    '''
+    """
     if len(score_map.shape) == 4:
         score_map = score_map[0, :, :, 0]
         geo_map = geo_map[0, :, :, ]
@@ -87,6 +95,10 @@ def detect(score_map, geo_map, timer, score_map_thresh=0.8, box_thresh=0.1, nms_
     # restore
     start = time.time()
     text_box_restored = restore_rectangle(xy_text[:, ::-1]*4, geo_map[xy_text[:, 0], xy_text[:, 1], :]) # N*4*2
+
+    # 在这里可以打印一下
+
+
     print('{} text boxes before nms'.format(text_box_restored.shape[0]))
     boxes = np.zeros((text_box_restored.shape[0], 9), dtype=np.float32)
     boxes[:, :8] = text_box_restored.reshape((-1, 8))
@@ -108,7 +120,7 @@ def detect(score_map, geo_map, timer, score_map_thresh=0.8, box_thresh=0.1, nms_
         boxes[i, 8] = cv2.mean(score_map, mask)[0]
     boxes = boxes[boxes[:, 8] > box_thresh]
 
-    return boxes, timer
+    return text_box_restored.tolist(), boxes, timer
 
 
 def sort_poly(p):

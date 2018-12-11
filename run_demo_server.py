@@ -52,9 +52,11 @@ def get_predictor(checkpoint_path):
 
     sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
 
+    # 获得检查点信息
     ckpt_state = tf.train.get_checkpoint_state(checkpoint_path)
     model_path = os.path.join(checkpoint_path, os.path.basename(ckpt_state.model_checkpoint_path))
     logger.info('Restore from {}'.format(model_path))
+    # 加载模型
     saver.restore(sess, model_path)
 
     def predictor(img):
@@ -84,32 +86,58 @@ def get_predictor(checkpoint_path):
             }
         }
         """
+        # 模型开始的时间
         start_time = time.time()
+        # 有序的字典
         rtparams = collections.OrderedDict()
+
+        # 图片的基础信息
         rtparams['start_time'] = datetime.datetime.now().isoformat()
+        # 图片的大小
         rtparams['image_size'] = '{}x{}'.format(img.shape[1], img.shape[0])
+
+        # todo 暂时不清楚这个timer是干啥的
         timer = collections.OrderedDict([
             ('net', 0),
             ('restore', 0),
             ('nms', 0)
         ])
 
+        # 图像缩放，im_resized为调整后的图像尺寸；ratio_h和ratio_w分别是高和宽的缩放比例
         im_resized, (ratio_h, ratio_w) = resize_image(img)
-        rtparams['working_size'] = '{}x{}'.format(
-            im_resized.shape[1], im_resized.shape[0])
+        rtparams['working_size'] = '{}x{}'.format(im_resized.shape[1], im_resized.shape[0])
+
+        # 模型预测的时间
         start = time.time()
-        score, geometry = sess.run(
-            [f_score, f_geometry],
-            feed_dict={input_images: [im_resized[:,:,::-1]]})
+        score, geometry = sess.run([f_score, f_geometry], feed_dict={input_images: [im_resized[:, :, ::-1]]})
         timer['net'] = time.time() - start
 
-        boxes, timer = detect(score_map=score, geo_map=geometry, timer=timer)
-        logger.info('net {:.0f}ms, restore {:.0f}ms, nms {:.0f}ms'.format(
-            timer['net']*1000, timer['restore']*1000, timer['nms']*1000))
+        # 文本框的检测
+        # first_boxes 为最初的文本框；
+        # boxes 为nms后的文本框
+        # timer 为时间内容
+        first_boxes, boxes, timer = detect(score_map=score, geo_map=geometry, timer=timer,
+                                           box_thresh=0.2,
+                                           nms_thres=0.5)
 
+        logger.info('net {:.0f}ms, restore {:.0f}ms, nms {:.0f}ms'.format(
+            timer['net'] * 1000, timer['restore'] * 1000, timer['nms'] * 1000))
+
+        # 最初的文本框的还原
+        if first_boxes is not None:
+            first_boxes = np.array(first_boxes)[:, :8].reshape((-1, 4, 2))
+            # 坐标还原
+            first_boxes[:, :, 0] /= ratio_w
+            first_boxes[:, :, 1] /= ratio_h
+
+        # 合并后的文本框还原
         if boxes is not None:
-            scores = boxes[:,8].reshape(-1)
+            # 文本框的分值
+            scores = boxes[:, 8].reshape(-1)
+            # 文本框的坐标
             boxes = boxes[:, :8].reshape((-1, 4, 2))
+
+            # 坐标还原
             boxes[:, :, 0] /= ratio_w
             boxes[:, :, 1] /= ratio_h
 
@@ -122,7 +150,7 @@ def get_predictor(checkpoint_path):
             text_lines = []
             for box, score in zip(boxes, scores):
                 box = sort_poly(box.astype(np.int32))
-                if np.linalg.norm(box[0] - box[1]) < 5 or np.linalg.norm(box[3]-box[0]) < 5:
+                if np.linalg.norm(box[0] - box[1]) < 5 or np.linalg.norm(box[3] - box[0]) < 5:
                     continue
                 tl = collections.OrderedDict(zip(
                     ['x0', 'y0', 'x1', 'y1', 'x2', 'y2', 'x3', 'y3'],
@@ -130,13 +158,13 @@ def get_predictor(checkpoint_path):
                 tl['score'] = float(score)
                 text_lines.append(tl)
         ret = {
+            'first_boxes': first_boxes.tolist(),
             'text_lines': text_lines,
             'rtparams': rtparams,
             'timing': timer,
         }
-        #ret.update(get_host_info())
+        # ret.update(get_host_info())
         return ret
-
 
     return predictor
 
@@ -152,8 +180,8 @@ class Config:
 
 config = Config()
 
-
 app = Flask(__name__)
+
 
 @app.route('/')
 def index():
@@ -168,6 +196,14 @@ def draw_illu(illu, rst):
         cv2.polylines(illu, [d], isClosed=True, color=(255, 255, 0))
     return illu
 
+def draw_debug(illu, rst):
+    for t in rst['first_boxes']:
+        d = np.array([t[0][0], t[0][1], t[1][0], t[1][1], t[2][0],
+                      t[2][1], t[3][0], t[3][1]], dtype='int32')
+        d = d.reshape(-1, 2)
+        cv2.polylines(illu, [d], isClosed=True, color=(255, 255, 0))
+    return illu
+
 
 def save_result(img, rst):
     session_id = str(uuid.uuid1())
@@ -177,6 +213,10 @@ def save_result(img, rst):
     # save input image
     output_path = os.path.join(dirpath, 'input.png')
     cv2.imwrite(output_path, img)
+
+    # save debug
+    output_path = os.path.join(dirpath, 'debug.png')
+    cv2.imwrite(output_path, draw_debug(img.copy(), rst))
 
     # save illustration
     output_path = os.path.join(dirpath, 'output.png')
@@ -191,7 +231,6 @@ def save_result(img, rst):
     return rst
 
 
-
 checkpoint_path = './east_icdar2015_resnet_v1_50_rbox'
 
 
@@ -202,6 +241,8 @@ def index_post():
     bio = io.BytesIO()
     request.files['image'].save(bio)
     img = cv2.imdecode(np.frombuffer(bio.getvalue(), dtype='uint8'), 1)
+
+    # 加载文本框预测模型
     rst = get_predictor(checkpoint_path)(img)
 
     save_result(img, rst)
@@ -210,7 +251,7 @@ def index_post():
 
 def main():
     global checkpoint_path
-    checkpoint_path="/Users/xingoo/Documents/dataset/east_icdar2015_resnet_v1_50_rbox"
+    checkpoint_path = "/Users/xingoo/Desktop/east_resnet_v1_50_rbox"
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', default=8769, type=int)
     parser.add_argument('--checkpoint-path', default=checkpoint_path)
@@ -225,6 +266,6 @@ def main():
     app.debug = args.debug
     app.run('0.0.0.0', args.port)
 
+
 if __name__ == '__main__':
     main()
-
